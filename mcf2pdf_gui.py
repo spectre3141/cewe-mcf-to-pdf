@@ -27,6 +27,8 @@ class App(tk.Tk):
         self.quality = tk.StringVar(value=next(iter(QUALITY)))
         self.single = tk.BooleanVar(value=False)
         self.open_after = tk.BooleanVar(value=True)
+        self.backgrounds = tk.BooleanVar(value=True)
+        self.page_numbers = tk.BooleanVar(value=True)
 
         f = ttk.Frame(self, padding=12)
         f.pack(fill="both", expand=True)
@@ -47,18 +49,23 @@ class App(tk.Tk):
                      width=16).pack(side="left", padx=(6, 16))
         ttk.Checkbutton(opts, text="Single pages (split spreads)", variable=self.single).pack(side="left")
         ttk.Checkbutton(opts, text="Open PDF when done", variable=self.open_after).pack(side="left", padx=(16, 0))
+        opts2 = ttk.Frame(f)
+        opts2.grid(row=3, column=0, columnspan=3, sticky="w", pady=(0, 10))
+        ttk.Checkbutton(opts2, text="Page numbers", variable=self.page_numbers).pack(side="left")
+        ttk.Checkbutton(opts2, text="Background colours (approximation of CEWE designs)",
+                        variable=self.backgrounds).pack(side="left", padx=(16, 0))
 
         self.bar = ttk.Progressbar(f, mode="determinate")
-        self.bar.grid(row=3, column=0, columnspan=3, sticky="ew")
+        self.bar.grid(row=4, column=0, columnspan=3, sticky="ew")
         self.status = ttk.Label(f, text="Choose an .mcf file to start.")
-        self.status.grid(row=4, column=0, columnspan=3, sticky="w", pady=(4, 6))
+        self.status.grid(row=5, column=0, columnspan=3, sticky="w", pady=(4, 6))
 
         self.log = tk.Text(f, height=6, state="disabled", wrap="word")
-        self.log.grid(row=5, column=0, columnspan=3, sticky="nsew")
-        f.rowconfigure(5, weight=1)
+        self.log.grid(row=6, column=0, columnspan=3, sticky="nsew")
+        f.rowconfigure(6, weight=1)
 
         btns = ttk.Frame(f)
-        btns.grid(row=6, column=0, columnspan=3, sticky="e", pady=(10, 0))
+        btns.grid(row=7, column=0, columnspan=3, sticky="e", pady=(10, 0))
         self.go = ttk.Button(btns, text="Convert to PDF", command=self.start)
         self.go.pack(side="left")
         self.stop = ttk.Button(btns, text="Cancel", command=self.cancel_flag.set, state="disabled")
@@ -113,16 +120,18 @@ class App(tk.Tk):
         self.stop.config(state="normal")
         self.bar.config(value=0, maximum=1)
         self.write_log(f"Converting {os.path.basename(mcf)} …")
-        args = (mcf, out, QUALITY[self.quality.get()], self.single.get())
+        args = (mcf, out, QUALITY[self.quality.get()], self.single.get(),
+                self.backgrounds.get(), self.page_numbers.get())
         self.worker = threading.Thread(target=self.run, args=args, daemon=True)
         self.worker.start()
 
-    def run(self, mcf, out, dpi, single):
+    def run(self, mcf, out, dpi, single, backgrounds, page_numbers):
         try:
             res = mcf2pdf.convert(mcf, out, dpi, single,
                                   progress=lambda d, t, l: self.q.put(("progress", d, t, l)),
                                   warn=lambda m: self.q.put(("warn", m)),
-                                  cancel=self.cancel_flag.is_set)
+                                  cancel=self.cancel_flag.is_set,
+                                  backgrounds=backgrounds, page_numbers=page_numbers)
             self.q.put(("done", res))
         except mcf2pdf.Cancelled:
             self.q.put(("cancelled",))

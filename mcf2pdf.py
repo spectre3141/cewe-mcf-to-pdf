@@ -281,15 +281,68 @@ def render_page(c, page, imgdir, dpi, warn, x_off=0, page_h=None):
         c.restoreState()
 
 
+# CEWE's background designs ship with the CEWE software, not with the project.
+# Approximate the ones we know by a plain colour: (designElementId, hue) -> colour.
+KNOWN_BACKGROUNDS = {
+    ("406", "60"): "#d8d8cc",  # light green-grey paper, sampled from the CEWE editor
+}
+
+
+def background_color(page):
+    """Approximate fill colour for a page's CEWE background design, or None."""
+    if page is None:
+        return None
+    for bg in page.findall("background"):
+        key = (bg.get("designElementId"), bg.get("hue"))
+        if bg.get("type") == "1" and key in KNOWN_BACKGROUNDS:
+            return KNOWN_BACKGROUNDS[key]
+    return None
+
+
+def draw_backgrounds(c, halves, W, H, x_off):
+    """halves: [(page element or None, x0, width)] in mcf units."""
+    for el, x0, w in halves:
+        col = background_color(el)
+        if col:
+            c.setFillColor(argb("#ff" + col[1:]))
+            c.rect((x_off + x0) * U, 0, w * U, H * U, stroke=0, fill=1)
+
+
+def draw_page_numbers(c, pn, numbers, W, H, x_off):
+    """numbers: [(number, 'left'|'right')] for the halves of a spread."""
+    if pn is None:
+        return
+    size = float(pn.get("fontsize", 14))
+    bold = pn.get("fontbold") == "1"
+    italic = pn.get("fontitalics") == "1"
+    font = FONT + ("-BI" if bold and italic else "-B" if bold else "-I" if italic else "") if FONT == "Sans" else \
+        ("Helvetica-Bold" if bold else "Helvetica")
+    margin, vmargin = float(pn.get("margin", 50)), float(pn.get("verticalMargin", 100))
+    color = argb(pn.get("textcolor", "#ff000000")) or argb("#ff000000")
+    fmt = pn.get("textstring", "%")
+    c.setFillColor(color)
+    c.setFont(font, size)
+    y = vmargin * U - size * 0.35  # vertically centre the digits on the margin line
+    for num, side in numbers:
+        s = fmt.replace("%", str(num))
+        if side == "left":  # outer edge of a left page is the spread's left edge
+            c.drawString((x_off + margin) * U, y, s)
+        else:
+            c.drawRightString((x_off + W - margin) * U, y, s)
+
+
 class Cancelled(Exception):
     pass
 
 
-def convert(mcf, out=None, dpi=300, single=False, progress=None, warn=None, cancel=None):
+def convert(mcf, out=None, dpi=300, single=False, progress=None, warn=None, cancel=None,
+            backgrounds=True, page_numbers=True):
     """Convert `mcf` to PDF and return the output path.
 
     progress(done, total, label) is called after each rendered spread;
     warn(msg) for non-fatal problems; cancel() -> True aborts with Cancelled.
+    backgrounds: fill known CEWE background designs with an approximate colour.
+    page_numbers: draw page numbers as configured in the book.
     """
     out = out or os.path.splitext(mcf)[0] + ".pdf"
     warn = warn or (lambda m: print("warning:", m, file=sys.stderr))
@@ -300,11 +353,37 @@ def convert(mcf, out=None, dpi=300, single=False, progress=None, warn=None, canc
     if not os.path.isdir(imgdir):
         warn(f"image folder not found: {imgdir}")
     # spine is part of the cover; odd normal pages hold no content (spreads live on even pages)
-    pages = [p for p in root.findall("page")
+    all_pages = root.findall("page")
+    pages = [p for p in all_pages
              if p.get("type") != "spine" and (p.findall("area") or p.get("type") == "emptypage")]
+    by_nr = {int(p.get("pagenr")): p for p in all_pages if p.get("type") == "normalpage"}
+    ac = root.find("articleConfig")
+    n_normal = int(ac.get("normalpages")) if ac is not None else max(by_nr, default=0)
+    pn = root.find("pagenumbering") if page_numbers else None
+    empties = [p for p in all_pages if p.get("type") == "emptypage"]
+
+    def spread_info(page, W):
+        """-> ([(bg element, x0, width)], [(page number, side)]) for a spread."""
+        typ = page.get("type")
+        if typ == "normalpage":  # even page n holds the spread n | n+1
+            n = int(page.get("pagenr"))
+            nums = [(k, side) for k, side in ((n, "left"), (n + 1, "right")) if 1 <= k <= n_normal]
+            return [(page, 0, W / 2), (by_nr.get(n + 1, page), W / 2, W / 2)], nums
+        if typ == "emptypage" and empties and page is empties[0]:  # inside front cover | page 1
+            return [(page, 0, W / 2), (by_nr.get(1, page), W / 2, W / 2)], [(1, "right")] if n_normal else []
+        return [(page, 0, W)], []
+
     tmp = out + ".part"
     c = canvas.Canvas(tmp)
     c.setTitle(os.path.splitext(os.path.basename(mcf))[0])
+
+    def render(page, W, H, x_off):
+        halves, nums = spread_info(page, W)
+        if backgrounds:
+            draw_backgrounds(c, halves, W, H, x_off)
+        render_page(c, page, imgdir, dpi, warn, x_off=x_off, page_h=H * U)
+        draw_page_numbers(c, pn, nums, W, H, x_off)
+
     try:
         for i, page in enumerate(pages):
             if cancel and cancel():
@@ -317,12 +396,12 @@ def convert(mcf, out=None, dpi=300, single=False, progress=None, warn=None, canc
                     c.setPageSize((W / 2 * U, H * U))
                     c.saveState()
                     p = c.beginPath(); p.rect(0, 0, W / 2 * U, H * U); c.clipPath(p, stroke=0, fill=0)
-                    render_page(c, page, imgdir, dpi, warn, x_off=-half * W / 2, page_h=H * U)
+                    render(page, W, H, -half * W / 2)
                     c.restoreState()
                     c.showPage()
             else:
                 c.setPageSize((W * U, H * U))
-                render_page(c, page, imgdir, dpi, warn, page_h=H * U)
+                render(page, W, H, 0)
                 c.showPage()
             if progress:
                 label = "Cover" if typ == "fullcover" else ("Inside cover" if typ == "emptypage" else f"Pages {page.get('pagenr')}-{int(page.get('pagenr')) + 1}")
@@ -341,9 +420,12 @@ def main():
     ap.add_argument("out", nargs="?")
     ap.add_argument("--dpi", type=int, default=300, help="max image resolution in the PDF (default 300)")
     ap.add_argument("--single", action="store_true", help="split double-page spreads into single pages")
+    ap.add_argument("--white", action="store_true", help="white background instead of approximated CEWE designs")
+    ap.add_argument("--no-page-numbers", action="store_true", help="don't draw page numbers")
     a = ap.parse_args()
     out = convert(a.mcf, a.out, a.dpi, a.single,
-                  progress=lambda d, t, l: print(f"[{d}/{t}] {l}", file=sys.stderr))
+                  progress=lambda d, t, l: print(f"[{d}/{t}] {l}", file=sys.stderr),
+                  backgrounds=not a.white, page_numbers=not a.no_page_numbers)
     print(f"wrote {out}")
 
 

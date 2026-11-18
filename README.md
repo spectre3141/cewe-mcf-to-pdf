@@ -5,9 +5,10 @@ Converts a CEWE photo book project (`.mcf`) into a PDF, with photos cropped as i
 - Cover and double-page spreads, or single pages
 - Choose image quality: 300 dpi (print quality), 200 or 150 dpi (smaller file)
 - Small GUI, plus a command line
+- Page numbers as set in the book
 - Stand-alone programs for Windows and Linux: no Python or CEWE software needed
 
-**Limitation:** CEWE's built-in background designs and clip-arts ship with the CEWE software, not in the `.mcf` project, so backgrounds are rendered white.
+**Limitation:** CEWE's built-in background designs and clip-arts ship with the CEWE software, not in the `.mcf` project. Known background designs are approximated by a plain colour (switch off with *Background colours* in the GUI or `--white`); unknown ones are rendered white.
 
 The `.mcf` file must sit next to its image folder (`<name>_mcf-Dateien`), as CEWE saves it.
 
@@ -27,7 +28,7 @@ Then choose the `.mcf` file and click **Convert to PDF**.
 ```
 pip install -r requirements.txt
 python3 mcf2pdf_gui.py                                        # GUI
-python3 mcf2pdf.py book.mcf [out.pdf] [--dpi 200] [--single]   # command line
+python3 mcf2pdf.py book.mcf [out.pdf] [--dpi 200] [--single] [--white] [--no-page-numbers]
 ```
 
 ## Build the stand-alone programs
