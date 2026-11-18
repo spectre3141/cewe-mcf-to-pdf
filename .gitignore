@@ -1,0 +1,14 @@
+# personal photo books and output - never commit
+*.mcf
+*.mcf~
+*_mcf-Dateien/
+*.pdf
+*.pdf.part
+
+# build output
+dist/
+build/
+*.spec
+.build-venv/
+__pycache__/
+*.pyc
