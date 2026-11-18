@@ -177,18 +177,15 @@ def draw_text(c, area, x, y, w, h):
         c.rect(x, y, w, h, stroke=0, fill=1)
     q = QtRich()
     q.feed(text.text)
+    # Horizontal alignment comes only from the paragraphs' own align attribute;
+    # a paragraph without one is left-aligned (Qt rich text). textFormat's
+    # Alignment is CEWE's "format for new text" and is not applied to existing text.
     default_align = "left"
     al = fmt.get("Alignment", "")
-    if "ALIGNHCENTER" in al:
-        default_align = "center"
-    elif "ALIGNRIGHT" in al:
-        default_align = "right"
-    elif "ALIGNJUSTIFY" in al:
-        default_align = "justify"
     flow = []
     for i, p in enumerate(q.paras):
         markup, size = para_markup(p)
-        st = ParagraphStyle("p", fontName=FONT, fontSize=size, leading=size * 1.17,
+        st = ParagraphStyle("p", fontName=FONT, fontSize=size, leading=size * 1.15,
                             alignment=ALIGN.get(p["align"] or default_align, TA_LEFT),
                             spaceBefore=p["mt"] * 0.75 if i else 0, spaceAfter=p["mb"] * 0.75)
         if not markup.strip() or markup in ("<br/>",):
