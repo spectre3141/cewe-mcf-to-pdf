@@ -17,13 +17,14 @@ class App(tk.Tk):
     def __init__(self, initial=None):
         super().__init__()
         self.title("MCF to PDF")
-        self.minsize(560, 340)
+        self.minsize(600, 400)
         self.q = queue.Queue()
         self.worker = None
         self.cancel_flag = threading.Event()
 
         self.mcf = tk.StringVar()
         self.out = tk.StringVar()
+        self.images = tk.StringVar()  # empty = automatic (<name>_mcf-Dateien next to the .mcf)
         self.quality = tk.StringVar(value=next(iter(QUALITY)))
         self.single = tk.BooleanVar(value=False)
         self.open_after = tk.BooleanVar(value=True)
@@ -38,34 +39,41 @@ class App(tk.Tk):
         ttk.Entry(f, textvariable=self.mcf).grid(row=0, column=1, sticky="ew", padx=6)
         ttk.Button(f, text="Browse…", command=self.pick_mcf).grid(row=0, column=2)
 
-        ttk.Label(f, text="Save PDF as:").grid(row=1, column=0, sticky="w", pady=(6, 0))
-        ttk.Entry(f, textvariable=self.out).grid(row=1, column=1, sticky="ew", padx=6, pady=(6, 0))
-        ttk.Button(f, text="Browse…", command=self.pick_out).grid(row=1, column=2, pady=(6, 0))
+        ttk.Label(f, text="Images folder:").grid(row=1, column=0, sticky="w", pady=(6, 0))
+        ttk.Entry(f, textvariable=self.images).grid(row=1, column=1, sticky="ew", padx=6, pady=(6, 0))
+        ttk.Button(f, text="Browse…", command=self.pick_images).grid(row=1, column=2, pady=(6, 0))
+        self.images_hint = ttk.Label(f, text="Leave empty to use the folder CEWE saved next to the .mcf.",
+                                     foreground="gray40")
+        self.images_hint.grid(row=2, column=1, columnspan=2, sticky="w", padx=6)
+
+        ttk.Label(f, text="Save PDF as:").grid(row=3, column=0, sticky="w", pady=(6, 0))
+        ttk.Entry(f, textvariable=self.out).grid(row=3, column=1, sticky="ew", padx=6, pady=(6, 0))
+        ttk.Button(f, text="Browse…", command=self.pick_out).grid(row=3, column=2, pady=(6, 0))
 
         opts = ttk.Frame(f)
-        opts.grid(row=2, column=0, columnspan=3, sticky="w", pady=10)
+        opts.grid(row=4, column=0, columnspan=3, sticky="w", pady=10)
         ttk.Label(opts, text="Image quality:").pack(side="left")
         ttk.Combobox(opts, textvariable=self.quality, values=list(QUALITY), state="readonly",
                      width=16).pack(side="left", padx=(6, 16))
         ttk.Checkbutton(opts, text="Single pages (split spreads)", variable=self.single).pack(side="left")
         ttk.Checkbutton(opts, text="Open PDF when done", variable=self.open_after).pack(side="left", padx=(16, 0))
         opts2 = ttk.Frame(f)
-        opts2.grid(row=3, column=0, columnspan=3, sticky="w", pady=(0, 10))
+        opts2.grid(row=5, column=0, columnspan=3, sticky="w", pady=(0, 10))
         ttk.Checkbutton(opts2, text="Page numbers", variable=self.page_numbers).pack(side="left")
         ttk.Checkbutton(opts2, text="Background colours (approximation of CEWE designs)",
                         variable=self.backgrounds).pack(side="left", padx=(16, 0))
 
         self.bar = ttk.Progressbar(f, mode="determinate")
-        self.bar.grid(row=4, column=0, columnspan=3, sticky="ew")
+        self.bar.grid(row=6, column=0, columnspan=3, sticky="ew")
         self.status = ttk.Label(f, text="Choose an .mcf file to start.")
-        self.status.grid(row=5, column=0, columnspan=3, sticky="w", pady=(4, 6))
+        self.status.grid(row=7, column=0, columnspan=3, sticky="w", pady=(4, 6))
 
         self.log = tk.Text(f, height=6, state="disabled", wrap="word")
-        self.log.grid(row=6, column=0, columnspan=3, sticky="nsew")
-        f.rowconfigure(6, weight=1)
+        self.log.grid(row=8, column=0, columnspan=3, sticky="nsew")
+        f.rowconfigure(8, weight=1)
 
         btns = ttk.Frame(f)
-        btns.grid(row=7, column=0, columnspan=3, sticky="e", pady=(10, 0))
+        btns.grid(row=9, column=0, columnspan=3, sticky="e", pady=(10, 0))
         self.go = ttk.Button(btns, text="Convert to PDF", command=self.start)
         self.go.pack(side="left")
         self.stop = ttk.Button(btns, text="Cancel", command=self.cancel_flag.set, state="disabled")
@@ -82,6 +90,21 @@ class App(tk.Tk):
         self.mcf.set(path)
         self.out.set(os.path.splitext(path)[0] + ".pdf")
         self.status.config(text="Ready.")
+        try:
+            auto = mcf2pdf.default_image_dir(path)
+        except Exception:
+            return
+        if not self.images.get().strip() and not os.path.isdir(auto):
+            self.status.config(text=f"Photo folder {os.path.basename(auto.rstrip(os.sep)) or '?'} not found "
+                                    "next to the .mcf: choose the images folder.")
+
+    def pick_images(self):
+        start = self.images.get() or os.path.dirname(self.mcf.get())
+        p = filedialog.askdirectory(title="Choose the folder with the book's photos",
+                                    initialdir=start or None, mustexist=True)
+        if p:
+            self.images.set(os.path.normpath(p))
+            self.status.config(text="Ready.")
 
     def pick_mcf(self):
         p = filedialog.askopenfilename(title="Choose photo book",
@@ -113,6 +136,10 @@ class App(tk.Tk):
         if not out:
             out = os.path.splitext(mcf)[0] + ".pdf"
             self.out.set(out)
+        images = self.images.get().strip() or None
+        if images and not os.path.isdir(images):
+            messagebox.showerror("MCF to PDF", f"Images folder not found:\n{images}")
+            return
         if os.path.exists(out) and not messagebox.askyesno("MCF to PDF", f"{os.path.basename(out)} already exists.\nReplace it?"):
             return
         self.cancel_flag.clear()
@@ -121,17 +148,18 @@ class App(tk.Tk):
         self.bar.config(value=0, maximum=1)
         self.write_log(f"Converting {os.path.basename(mcf)} …")
         args = (mcf, out, QUALITY[self.quality.get()], self.single.get(),
-                self.backgrounds.get(), self.page_numbers.get())
+                self.backgrounds.get(), self.page_numbers.get(), images)
         self.worker = threading.Thread(target=self.run, args=args, daemon=True)
         self.worker.start()
 
-    def run(self, mcf, out, dpi, single, backgrounds, page_numbers):
+    def run(self, mcf, out, dpi, single, backgrounds, page_numbers, images):
         try:
             res = mcf2pdf.convert(mcf, out, dpi, single,
                                   progress=lambda d, t, l: self.q.put(("progress", d, t, l)),
                                   warn=lambda m: self.q.put(("warn", m)),
                                   cancel=self.cancel_flag.is_set,
-                                  backgrounds=backgrounds, page_numbers=page_numbers)
+                                  backgrounds=backgrounds, page_numbers=page_numbers,
+                                  image_dir=images)
             self.q.put(("done", res))
         except mcf2pdf.Cancelled:
             self.q.put(("cancelled",))

@@ -222,14 +222,27 @@ def draw_image(c, area, imgdir, x, y, w, h, dpi, warn):
     img = area.find("image")
     if img is None:
         return
-    fn = img.get("filename", "").replace("safecontainer:/", "")
+    fn = img.get("filename", "").strip()
+    if fn.startswith("safecontainer:"):
+        fn = fn[len("safecontainer:"):].lstrip("/\\")
+    if not fn:
+        return  # empty photo placeholder (no photo dropped into this box)
     path = os.path.join(imgdir, fn)
-    if not os.path.exists(path):
+    if not os.path.isfile(path) and os.path.isabs(fn) and os.path.isfile(fn):
+        path = fn  # some projects reference photos by absolute path
+    if not os.path.isfile(path):
         warn(f"missing image {fn}")
         return
     cut = img.find("cutout")
     cl, ct, sc = (float(cut.get("left", 0)), float(cut.get("top", 0)), float(cut.get("scale", 1))) if cut is not None else (0, 0, 1)
-    im = load_image(path)
+    if sc <= 0:
+        warn(f"invalid scale for image {fn}")
+        return
+    try:
+        im = load_image(path)
+    except Exception as e:  # unreadable or unsupported format (e.g. HEIC)
+        warn(f"cannot read image {fn}: {e}")
+        return
     W, H = im.size
     aw, ah = w / U, h / U  # area size in mcf units
     # visible part of the image in source pixels
@@ -250,11 +263,13 @@ def draw_image(c, area, imgdir, x, y, w, h, dpi, warn):
     crop.save(buf, "JPEG", quality=90)
     buf.seek(0)
     c.saveState()
-    p = c.beginPath()
-    p.rect(x, y, w, h)
-    c.clipPath(p, stroke=0, fill=0)
-    c.drawImage(ImageReader(buf), x + px0 * U, y + h - (py0 + ph) * U, pw * U, ph * U)
-    c.restoreState()
+    try:
+        p = c.beginPath()
+        p.rect(x, y, w, h)
+        c.clipPath(p, stroke=0, fill=0)
+        c.drawImage(ImageReader(buf), x + px0 * U, y + h - (py0 + ph) * U, pw * U, ph * U)
+    finally:
+        c.restoreState()
 
 
 def render_page(c, page, imgdir, dpi, warn, x_off=0, page_h=None):
@@ -271,10 +286,13 @@ def render_page(c, page, imgdir, dpi, warn, x_off=0, page_h=None):
             c.rotate(-rot)
         x, y, ww, hh = -w / 2 * U, -h / 2 * U, w * U, h * U
         t = area.get("areatype")
-        if t == "imagearea":
-            draw_image(c, area, imgdir, x, y, ww, hh, dpi, warn)
-        elif t in ("textarea", "spinetextarea"):
-            draw_text(c, area, x, y, ww, hh)
+        try:
+            if t == "imagearea":
+                draw_image(c, area, imgdir, x, y, ww, hh, dpi, warn)
+            elif t in ("textarea", "spinetextarea"):
+                draw_text(c, area, x, y, ww, hh)
+        except Exception as e:  # one broken box shouldn't stop the whole book
+            warn(f"skipped {t} on page {page.get('pagenr')}: {e}")
         c.restoreState()
 
 
@@ -332,23 +350,32 @@ class Cancelled(Exception):
     pass
 
 
+def default_image_dir(mcf):
+    """The image folder CEWE saved next to the .mcf (named in the file's imagedir)."""
+    root = ET.parse(mcf).getroot()
+    return os.path.join(os.path.dirname(os.path.abspath(mcf)), root.get("imagedir", ""))
+
+
 def convert(mcf, out=None, dpi=300, single=False, progress=None, warn=None, cancel=None,
-            backgrounds=True, page_numbers=True):
+            backgrounds=True, page_numbers=True, image_dir=None):
     """Convert `mcf` to PDF and return the output path.
 
     progress(done, total, label) is called after each rendered spread;
     warn(msg) for non-fatal problems; cancel() -> True aborts with Cancelled.
     backgrounds: fill known CEWE background designs with an approximate colour.
     page_numbers: draw page numbers as configured in the book.
+    image_dir: folder with the book's photos; default is the CEWE folder next to the .mcf.
     """
     out = out or os.path.splitext(mcf)[0] + ".pdf"
     warn = warn or (lambda m: print("warning:", m, file=sys.stderr))
     root = ET.parse(mcf).getroot()
     if root.tag != "fotobook":
         raise ValueError("Not a CEWE photo book (.mcf) file")
-    imgdir = os.path.join(os.path.dirname(os.path.abspath(mcf)), root.get("imagedir", ""))
+    imgdir = image_dir or os.path.join(os.path.dirname(os.path.abspath(mcf)), root.get("imagedir", ""))
+    if image_dir and not os.path.isdir(image_dir):
+        raise FileNotFoundError(f"Images folder not found: {image_dir}")
     if not os.path.isdir(imgdir):
-        warn(f"image folder not found: {imgdir}")
+        warn(f"image folder not found: {imgdir} (choose the folder with the photos as images folder)")
     # spine is part of the cover; odd normal pages hold no content (spreads live on even pages)
     all_pages = root.findall("page")
     pages = [p for p in all_pages
@@ -419,11 +446,20 @@ def main():
     ap.add_argument("--single", action="store_true", help="split double-page spreads into single pages")
     ap.add_argument("--white", action="store_true", help="white background instead of approximated CEWE designs")
     ap.add_argument("--no-page-numbers", action="store_true", help="don't draw page numbers")
+    ap.add_argument("--images", metavar="DIR",
+                    help="folder with the book's photos (default: the <name>_mcf-Dateien folder next to the .mcf)")
     a = ap.parse_args()
-    out = convert(a.mcf, a.out, a.dpi, a.single,
-                  progress=lambda d, t, l: print(f"[{d}/{t}] {l}", file=sys.stderr),
-                  backgrounds=not a.white, page_numbers=not a.no_page_numbers)
+    try:
+        out = _cli_convert(a)
+    except (OSError, ValueError, ET.ParseError) as e:
+        sys.exit(f"error: {e}")
     print(f"wrote {out}")
+
+
+def _cli_convert(a):
+    return convert(a.mcf, a.out, a.dpi, a.single,
+                   progress=lambda d, t, l: print(f"[{d}/{t}] {l}", file=sys.stderr),
+                   backgrounds=not a.white, page_numbers=not a.no_page_numbers, image_dir=a.images)
 
 
 if __name__ == "__main__":

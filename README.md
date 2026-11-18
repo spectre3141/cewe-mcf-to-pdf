@@ -10,7 +10,7 @@ Converts a CEWE photo book project (`.mcf`) into a PDF, with photos cropped as i
 
 **Limitation:** CEWE's built-in background designs and clip-arts ship with the CEWE software, not in the `.mcf` project. Known background designs are approximated by a plain colour (switch off with *Background colours* in the GUI or `--white`); unknown ones are rendered white.
 
-The `.mcf` file must sit next to its image folder (`<name>_mcf-Dateien`), as CEWE saves it.
+By default the photos are taken from the folder CEWE saves next to the `.mcf` (`<name>_mcf-Dateien`). If they are somewhere else, choose the folder under *Images folder* in the GUI, or use `--images DIR`.
 
 ## Download
 
@@ -28,7 +28,7 @@ Then choose the `.mcf` file and click **Convert to PDF**.
 ```
 pip install -r requirements.txt
 python3 mcf2pdf_gui.py                                        # GUI
-python3 mcf2pdf.py book.mcf [out.pdf] [--dpi 200] [--single] [--white] [--no-page-numbers]
+python3 mcf2pdf.py book.mcf [out.pdf] [--dpi 200] [--single] [--white] [--no-page-numbers] [--images DIR]
 ```
 
 ## Build the stand-alone programs
